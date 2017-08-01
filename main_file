@@ -1,0 +1,101 @@
+# Necessary Mudules
+from keras.preprocessing.text import Tokenizer
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.layers import GRU
+from keras.layers import Dropout
+import pickle
+import random
+from sklearn.model_selection import train_test_split
+import numpy as np
+import pandas as pd
+
+#Section 1: Preprocessing section, rebanlance the training samples over three languages
+#Import data
+data_train_raw = pd.read_csv('train_set_1.csv', header = None, encoding = "ISO-8859-1")
+data_test = pd.read_csv('test_set_1.csv', header = None, encoding = "ISO-8859-1")
+#Separate classes
+fr_index = np.array(data_train_raw.iloc[:,[0]] == 'fr')
+es_index = np.array(data_train_raw.iloc[:,[0]] == 'es')
+en_index = np.array(data_train_raw.iloc[:,[0]] == 'en')
+#resampling languages French and Spenish
+randidx = random.sample(range(0,4338), 1120)
+adjusted_fr = data_train_raw[fr_index]
+adjusted_fr = adjusted_fr.iloc[randidx,:]
+adjusted_es = data_train_raw[es_index]
+adjusted_es = adjusted_es.iloc[randidx,:]
+adjusted_en = data_train_raw[en_index]
+#Combine each class forming a new training set with 3360 observations
+data_train = pd.concat([adjusted_fr, adjusted_es, adjusted_en])
+
+#Section 2: Tokenization
+#Check if featuers have the same length, if not, padding and punctuating are necessary
+data_train_feature = list(data_train.iloc[0:,1])
+data_test_feature = list(data_test.iloc[1:,0])
+length = np.array(list(map(len, data_train_feature+data_test_feature)))
+print("If the features in training and testing set have the same length: {}".format(sum(length == 40)==8360))
+
+#Unpack data so that the structure turns as ['word seq 1', 'word seq 2', ...]
+data_train_feature_char = ['']
+for i in range(3360):
+	data_train_feature_char += str(data_train_feature[i])
+
+#Instantiate a tokenizer
+data_train_tokenized = Tokenizer(num_words=None,
+                                   filters='!"#$%&()*+,-./:;<=>?@[\]^_`{|}~\t\n',
+                                   lower=True,
+                                   split=" ",
+                                   char_level=True)
+
+#Get word_index dictionary and print
+data_train_tokenized.fit_on_texts(data_train_feature_char)
+print(data_train_tokenized.word_index)
+
+#Process Target variable y to one-hot
+y_Train = pd.get_dummies(data_train.iloc[0:,0])
+y_Train = np.array(y_Train)
+
+#Finalize tokenization with input data X_Train, converting to np.array
+X_Train = []
+X_Test = []
+for i in range(3360):
+	X_Train.append(data_train_tokenized.texts_to_matrix(data_train_feature[i]))
+X_Train = np.array(X_Train)
+
+#Divede X_Train into three parts: 70% training date, 15% validating date, and 15% testing data
+X_Train, X_Val, y_Train, y_Val = train_test_split(X_Train, y_Train, test_size=0.15, random_state=15)
+X_Train, X_test, y_Train, y_test = train_test_split(X_Train, y_Train, test_size=0.176, random_state=8)
+
+#Finalize tokenization with unlabled test data X_Test, converting to np.array
+for i in range(5000):
+	X_Test.append(data_train_tokenized.texts_to_matrix(data_test_feature[i]))
+X_Test = np.array(X_Test)
+
+#Section 3. Modelling LSTM
+output_dim = len(X_Train[1][1])
+model = Sequential()
+model.add(LSTM(10, input_shape = (40,output_dim)))
+model.add(Dropout(0.8))
+model.add(Dense(10, activation='softplus'))
+model.add(Dense(3, activation='softmax'))
+model.compile(loss='categorical_crossentropy', optimizer='rmsprop', metrics=['accuracy'])
+
+print(model.summary())
+#Fit the model
+model.fit(X_Train, y_Train, nb_epoch=800, batch_size = 40, verbose=1)
+
+#Section 4. Results reporting
+#Get performance measurements on validating set
+scores = model.evaluate(X_Val, y_Val, verbose=0)
+print("Validation accuracy: %.2f%%" % (scores[1]*100))
+
+#Get performance measurements on unlabled testing set
+scores = model.evaluate(X_test, y_test, verbose=0)
+print("Test accuracy: %.2f%%" % (scores[1]*100))
+
+#Get prediction on unlabled testing set and save to file
+y_=model.predict(X_Test, verbose=1)
+with open ('pred_today_date', 'wb') as fp:
+    pickle.dump(y_, fp)
+
